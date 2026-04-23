@@ -1,0 +1,51 @@
+version: '3.8'
+services:
+  zookeeper:
+    image: wurstmeister/zookeeper
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: wurstmeister/kafka
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      # [중요] 리스너 프로토콜 정의 (내부용/외부용 구분)
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      
+      # [중요] 리스너 설정
+      # INTERNAL: Docker 내부망에서 29092 포트로 대기
+      # EXTERNAL: 호스트(외부)에서 9092 포트로 대기
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
+      
+      # [중요] 클라이언트에게 알려줄 주소 (Advertised)
+      # kafka-ui 같은 컨테이너에는 'kafka:29092' 라고 알려줌
+      # 호스트(내 PC)에는 'localhost:9092' 라고 알려줌
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      
+      # 브로커 간 통신은 내부망(INTERNAL) 사용
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      # 브로커 내부에서 바인딩할 주소 (0.0.0.0:9092) 
+      #KAFKA_LISTENERS: PLAINTEXT://:9092
+      #KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://127.0.0.1:9092
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_CREATE_TOPICS: "factory-sensors:1:1"    
+    depends_on:
+      - zookeeper
+
+  # kafka 메세지 전송, 토픽, 브로커, 등등 UI로 관리, 모니터링등 대시보드 서비스
+  kafka-ui:
+    image: provectuslabs/kafka-ui
+    ports:
+      - "8081:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_NAME: connect
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_ADDRESS: http://kafka-connect:8083
+    depends_on:
+      - kafka
+    restart: always
