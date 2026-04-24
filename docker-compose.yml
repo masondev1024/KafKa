@@ -4,7 +4,7 @@ services:
     image: apache/kafka:3.7.0
     container_name: kafka-local
     ports:
-      - "9092:9092" # cloud에서 접근할 때 인바운드 열어줘야 하는 포트
+      - "9092:9092"
     environment:
       # KRaft 모드 설정
       KAFKA_NODE_ID: 1
@@ -22,19 +22,19 @@ services:
     networks:
       - kafka-net
 
-  # 2. Fluent Bit -> C 
+  # 2. Fluent Bit -> C
   fluent-bit:
     image: fluent/fluent-bit:latest
     container_name: fluent-bit
     volumes:
       - ./fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf
-      - ./sensor_logs:/opt/airflow/sensor_logs # airflow 로그가 저장된 디렉토리를 마운트
+      - ./sensor_logs:/opt/airflow/sensor_logs
     depends_on:
-      - kafka # fluent-bit이 kafka에 의존하도록 설정
+      - kafka
     networks:
-      - kafka-net # kafka-net으로 네트워크 연결되어 있음 서비스간에
+      - kafka-net
 
-  # 3. Logstash -> Java 
+  # 3. Logstash -> Java
   logstash:
     image: docker.elastic.co/logstash/logstash:8.12.0
     container_name: logstash

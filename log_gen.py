@@ -40,6 +40,7 @@ def generate_logs():
     with open(f"{log_dir}/sensor_text.log","a",encoding="utf-8") as f:
         f.write(json.dumps(text) + "\n")
 
+    print(f"로그 발생 완료 { data['timestamp'] }")
 # 4. 로그 발생기 가동
 def main():
     try:
