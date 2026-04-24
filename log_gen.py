@@ -34,10 +34,11 @@ def generate_logs():
     with open(f"{log_dir}/sensor_json.log","a",encoding="utf-8") as f:
         f.write(json.dumps(data) + "\n")
 
-
-
     # text 형태로 파일 기록(한줄에 로그 1개씩) -> f-string 구성
     # 파일명 ./sensor_log/sensor_text.log
+    text = f'[{data["timestamp"]}] ID={data["sensor_id"]} |  TEMP:{data["temperature"]} |   HUMI:{data["humidity"]} |   STAT:{data["status"]}'
+    with open(f"{log_dir}/sensor_text.log","a",encoding="utf-8") as f:
+        f.write(json.dumps(text) + "\n")
 
 # 4. 로그 발생기 가동
 def main():
