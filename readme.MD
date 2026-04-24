@@ -64,6 +64,10 @@ MESSAGING    :     Kafka / MSK (Broker) <-------------------------------------+-
                |          +----( Topic A: factory-json-topic ) <--- [Channel A Result]
                |          +----( Topic B: factory-text-topic ) <--- [Channel B Result]
                v                                                               |
+               v                                                               |
+                                                                        kafka connect / ui
+                                                                                |
+                                                                                v               
 VISUALIZE    :     OpenSearch (DB)      <---( Indexing & Search )---->  DASHBOARD (Kibana)
 ====================================================================================================
 ```
@@ -93,11 +97,10 @@ VISUALIZE    :     OpenSearch (DB)      <---( Indexing & Search )---->  DASHBOAR
                |          |
                |          +----( 토픽 A: factory-json-topic ) <--- [채널 A 결과물]
                |          +----( 토픽 B: factory-text-topic ) <--- [채널 B 결과물]
-               v                                                        |
-                                                                kafka connect / ui
-                                                                        |
-                                                                        |
-                                                                        v
+               v                                                                  |
+                                                                            kafka connect / ui
+                                                                                  |
+                                                                                  v
 시각화/분석  :     OpenSearch (DB)      <---( 인덱싱 및 검색 )------>  대시보드 (Kibana)
 ====================================================================================================
 ```
@@ -145,11 +148,50 @@ VISUALIZE    :     OpenSearch (DB)      <---( Indexing & Search )---->  DASHBOAR
     ```
         python log_gen.py
     ```
+    
 - conf가 수정되면
     - `docker compose restart` 반드시 수행
 
 - 전달 내용
-    - http로 전달해서 데이터가 늘어났음,
+    - http로 전달해서 데이터가 늘어났음, 
     - forward등 전달 방식은 다양함
         - forward 시도, 24224 포트 사용
-    
+```
+{
+    "event":{
+        "original":"[{\"date\":1777005819.42045,\"log\":\"\\\"[2026-04-24 13:43:38] ID=AI-FACTORY-001 |   TEMP:87.5 |   HUMI:42.1 |   STAT:RUNNING\\\"\"}]"},
+        "host":{"ip":"172.19.0.3"},
+        "user_agent":{"original":"Fluent-Bit"},
+        "date":1.77700581942045E9,
+        "url":{
+            "path":"/",
+            "domain":"logstash",
+            "port":5044
+        },
+        "http":{
+            "version":"HTTP/1.1",
+            "method":"POST",
+            "request":{
+                "body":{
+                    "bytes":"124"
+                },
+                "mime_type":"application/json"
+            }
+        },
+        "log":"\"[2026-04-24 13:43:38] ID=AI-FACTORY-001 |   TEMP:87.5 |   HUMI:42.1 |   STAT:RUNNING\"","@version":"1",
+        "@timestamp":"2026-04-24T04:43:40.412003029Z"
+}
+
+```
+
+# 로그 행태
+- 참고
+    - 최초 데이터 => fluent-bit/logstash => 데이터 형태가 노이즈가 많음(프로토콜때문에 추가된 내용이 많음) => 필터역할 필요
+    - 필터 보정하는 내용 업데이트(추후)
+
+# kafka 대시보드
+- kafka ui
+- message 흐름, connect를 통해 전달이 잘되는지 등 모니터링
+
+# local -> cloud 연결
+- kafka connect
