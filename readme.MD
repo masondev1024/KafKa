@@ -36,3 +36,71 @@ root@4527e52ba5f6:/# cd /opt/kafka/bin
 > kafka-console-consumer.sh --topic spacex --bootstrap-server 127.0.0.1:9092
 
 ```
+
+# local-datapipline 목표 시스템
+```
+[ LAYER ]          [ COMPONENT ]              [ PROTOCOL / ACTION ]             [ DATA FORMAT ]
+====================================================================================================
+SOURCE       :     Python (log_gen.py)  ----( Write to File )---->  [ /sensor_logs/*.log ]
+               |                                                                   |
+               |                                                            ( Shared Volume )
+               v                                                                   |
+INGESTION    :     Fluent Bit (Agent)   <---( Tailing File  )----------------------+
+               |          |
+               |          | [ CHANNEL A: DIRECT BYPASS ]
+               |          +--------------------------------------------( Produce )--+
+               |          |                                                         |
+               |          | [ CHANNEL B: PROXY ROUTE  ]                             |
+               |          +----( Forward )----> [ Logstash ] ----( Produce )--+     |
+               |                                     |                        |     |
+               v                                     v                        v     v
+TRANSFORM    : (A: Bypass)  +--[ Grok    : Pattern Matching & Extract Fields   ]--+ |
+               |            +--[ Mutate  : Data Type Conversion (Str->Float)   ]--+ |
+               |            +--[ Tagging : Add Metadata for Conditional Alerts ]--+ |
+               |                                                              |     |
+MESSAGING    :     Kafka / MSK (Broker) <-------------------------------------+-----+
+               |          |             ( Merge Structured & Processed Data )
+               |          |
+               |          +----( Topic A: factory-json-topic ) <--- [Channel A Result]
+               |          +----( Topic B: factory-text-topic ) <--- [Channel B Result]
+               v                                                               |
+VISUALIZE    :     OpenSearch (DB)      <---( Indexing & Search )---->  DASHBOARD (Kibana)
+====================================================================================================
+```
+```
+[ 계층 ]            [ 구성 요소 ]              [ 프로토콜 / 동작 ]              [ 데이터 형식 ]
+====================================================================================================
+데이터 소스  :     파이썬 (log_gen.py)  ----( 파일 쓰기 동작 )---->  [ /sensor_logs/*.log ]
+               |                                                                   |
+               |                                                            ( 공유 볼륨 연결 )
+               v                                                                   |
+데이터 수집  :     Fluent Bit (에이전트) <---( 로그 실시간 추적 )----------------------+
+               |          |
+               |          | [ 채널 A: 최단거리 직결(json 데이터)]
+               |          +--------------------------------------------( 메시지 발행 )--+
+               |          |                                                          |
+               |          | [ 채널 B: 가공 처리 중계(text 데이터)]                       |
+               |          +----( 데이터 전달 )----> [ Logstash ] ----( 메시지 발행)--+     |
+               |                                       |                          |  |
+               v                                       v                          v  v
+데이터 가공  : (A: 통과)    +--[ Grok    : 패턴 매칭을 통한 의미 있는 필드 추출 ]---+       |
+               |            +--[ Mutate  : 데이터 타입 변환 (문자열 -> 실수형)  ]---+    |
+               |            +--[ Tagging : 조건별 알람 처리를 위한 메타데이터  ]---+      
+               |                                                                  |  |
+데이터 적재  :     Kafka / MSK (브로커(허브))   <------------------------------------------+--+
+               |          |             ( 직결 데이터와 가공 데이터 통합 수신 )
+               |          |
+               |          +----( 토픽 A: factory-json-topic ) <--- [채널 A 결과물]
+               |          +----( 토픽 B: factory-text-topic ) <--- [채널 B 결과물]
+               v                                                                  |
+시각화/분석  :     OpenSearch (DB)      <---( 인덱싱 및 검색 )------>  대시보드 (Kibana)
+====================================================================================================
+```
+
+# 프로젝트 재구성
+- docker-compose.yml 수정(KRaft 적용)
+
+```
+    docker compose down
+    docker compose up -d
+```
