@@ -1,0 +1,43 @@
+# ====================================
+# 1. 데이터 소스 (Kafka에서 읽기)
+# Fluent-Bit가 전송한 'factory-json-topic'을 구독합
+# ====================================
+sources:
+  kafka_to_firehose_source:
+    type: "kafka"
+    bootstrap_servers: "kafka:9092"
+    group_id: "vector-firehose-consumer" # 컨슈머 그룹 ID
+    topics: 
+      - "factory-json-topic"             # Fluent-Bit가 보내는 토픽명과 동일하게 설정
+
+# ====================================
+# 2. 데이터 가공 (Transform)
+# Firehose로 보내기 전, 중복 제거를 위한 ID 부여나 
+# 추가 메타데이터(수집 시간 등)를 삽입할 수 있음
+# ====================================
+transforms:
+  add_ingest_time:
+    type: "remap"
+    inputs: 
+      - "kafka_to_firehose_source"
+    source: |
+      # Vector가 처리하는 시점의 타임스탬프 추가
+      .vector_ingest_at = now()
+
+
+# ====================================
+# 3. 데이터 목적지 (AWS Kinesis Firehose)
+# ====================================
+sinks:
+  firehose_sink:
+    type: "aws_kinesis_firehose"
+    inputs: 
+      - "add_ingest_time"
+    
+    # AWS 설정
+    region: "ap-northeast-2"
+    stream_name: "putdirect-de-ai-06-adf-kafka" # 실제 스트림 이름으로 수정
+
+    # 전송 데이터 형식
+    encoding:
+      codec: "json"

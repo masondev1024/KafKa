@@ -47,10 +47,10 @@ SOURCE       :     Python (log_gen.py)  ----( Write to File )---->  [ /sensor_lo
                v                                                                   |
 INGESTION    :     Fluent Bit (Agent)   <---( Tailing File  )----------------------+
                |          |
-               |          | [ CHANNEL A: DIRECT BYPASS ]
+               |          | [ CHANNEL A: DIRECT BYPASS(json) ]
                |          +--------------------------------------------( Produce )--+
                |          |                                                         |
-               |          | [ CHANNEL B: PROXY ROUTE  ]                             |
+               |          | [ CHANNEL B: PROXY ROUTE(text) ]                             |
                |          +----( Forward )----> [ Logstash ] ----( Produce )--+     |
                |                                     |                        |     |
                v                                     v                        v     v
@@ -180,18 +180,43 @@ VISUALIZE    :     OpenSearch (DB)      <---( Indexing & Search )---->  DASHBOAR
         },
         "log":"\"[2026-04-24 13:43:38] ID=AI-FACTORY-001 |   TEMP:87.5 |   HUMI:42.1 |   STAT:RUNNING\"","@version":"1",
         "@timestamp":"2026-04-24T04:43:40.412003029Z"
+    }
 }
-
 ```
 
-# 로그 행태
+# 로그 형태
 - 참고
-    - 최초 데이터 => fluent-bit/logstash => 데이터 형태가 노이즈가 많음(프로토콜때문에 추가된 내용이 많음) => 필터역할 필요
-    - 필터 보정하는 내용 업데이트(추후)
+    - 최초 데이터 => fluent-bit/logstash => 데이터 형태가 노이즈 많음!!(프토토콜때문에 추가된 내용이 많음) => 필터 역활 필요함
+    - 필터 보정 하는 내용 업데이트 (추후)
 
 # kafka 대시보드
 - kafka ui
-- message 흐름, connect를 통해 전달이 잘되는지 등 모니터링
+- 메세지의 흐름, connect를 통해 전달이 잘되는지 등등 모니터링 
 
-# local -> cloud 연결
-- kafka connect
+# 로컬 -> 클라우드 연결
+- kafka connect => X (플러그인 자주 변경, 정책 변경)
+- 전용 포워더로 변경
+    - Vector는 Datadog에서 만든 초고속 데이터 파이프라인 도구
+    - Java 의존성이 없고 단일 실행 파일로 돌아가서 Kafka Connect보다 훨씬 가볍고 설치가 쉬움
+    - YAML 설정 파일 하나로 모든 게 끝남.
+    - 메모리 사용량이 매우 적음 (Rust 기반).
+    - 단축된 파이프라인: Kafka -> Vector -> Firehose 구조를 YAML 설정 하나로 끝
+- docker-compose.yml 수정 (이미 반영되어 있음)
+    ```
+        vector:
+            image: timberio/vector:0.36.0-debian # 최신 안정 버전
+            container_name: vector
+            volumes:
+                - ./vector.yaml:/etc/vector/vector.yaml:ro
+            environment:
+                # .env 파일에 정의된 AWS 인증 정보를 전달
+                AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY}"
+                AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_KEY}"
+                AWS_REGION: "${AWS_REGION}"
+            depends_on:
+                - kafka
+            networks:
+                - kafka-net
+    ```
+- vector.yaml 작성
+    - 파일 참고
