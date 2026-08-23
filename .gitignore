@@ -211,3 +211,10 @@ __marimo__/
 # git rm -r --cached logs/
 logs/
 logs/***.msi
+
+# Local pipeline runtime state and generated data
+sensor_logs/*.log
+runtime/
+data/
+*.duckdb
+*.duckdb.wal

@@ -1,3 +1,15 @@
-FROM confluentinc/cp-kafka-connect:7.5.0
+FROM python:3.12-slim
 
-RUN confluent-hub install --no-prompt confluentinc/kafka-connect-aws-firehose:latest
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+COPY requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir --requirement requirements.txt
+
+COPY services ./services
+
+USER 10001:10001
+
+CMD ["python", "-m", "services.processor"]

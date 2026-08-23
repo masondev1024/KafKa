@@ -1,6 +1,6 @@
 # ====================================
 # 1. 데이터 소스 (Kafka에서 읽기)
-# Fluent-Bit가 전송한 'factory-json-topic'을 구독합
+# Normalizer가 보증한 clean topic을 구독합
 # ====================================
 sources:
   kafka_to_firehose_source:
@@ -8,7 +8,7 @@ sources:
     bootstrap_servers: "kafka:9092"
     group_id: "vector-firehose-consumer" # 컨슈머 그룹 ID
     topics: 
-      - "factory-json-topic"             # Fluent-Bit가 보내는 토픽명과 동일하게 설정
+      - "factory.sensor.clean.v1"
 
 # ====================================
 # 2. 데이터 가공 (Transform)
@@ -21,8 +21,8 @@ transforms:
     inputs: 
       - "kafka_to_firehose_source"
     source: |
-      # Vector가 처리하는 시점의 타임스탬프 추가
       .vector_ingest_at = now()
+      .pipeline = "factory-sensor-poc"
 
 
 # ====================================

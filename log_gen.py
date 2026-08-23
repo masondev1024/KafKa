@@ -1,58 +1,77 @@
-'''
-- 로그 생성 => 파일 기록
-- json 형태, 텍스트(한줄에 로그기록 작성) 형태
-'''
+"""Generate deterministic, replayable sensor events for the local PoC."""
 
-# 1. 모듈 가져오기
+from __future__ import annotations
+
+import datetime as dt
 import json
-import time
-import datetime
 import os
-
-# 2. 로그가 저장되는 디렉토리 지정/생성
-log_dir = './sensor_logs'
-if not os.path.exists(log_dir):
-    os.makedirs(log_dir)
+import random
+import time
+from pathlib import Path
 
 
-# 3. 로그 발생 및 저장
-def generate_logs():
-    # 로그 샘플
-    # 시간을 제외한 모든 값 고정
-    data = {
-        "timestamp" : datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "sensor_id" : "AI-FACTORY-001",
-        "temperature" : 87.5,
-        "humidity"  : 42.4,
-        "status"    : "RUNNING" 
+SENSOR_IDS = ("AI-FACTORY-001", "AI-FACTORY-002", "AI-FACTORY-003")
+STATUSES = ("RUNNING", "IDLE", "STOPPED")
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a number") from exc
+
+
+def generate_event(rng: random.Random, invalid_rate: float) -> dict[str, object]:
+    event = {
+        "timestamp": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+        "sensor_id": rng.choice(SENSOR_IDS),
+        "temperature": round(rng.uniform(70.0, 100.0), 1),
+        "humidity": round(rng.uniform(30.0, 70.0), 1),
+        "status": rng.choice(STATUSES),
     }
 
-    # json 형태로 파일 기록(한줄에 로그 1개씩) -> dict 객체 직렬화 처리
-    # 파일명 ./sensor_log_/sensor_json.log
-    # 한줄에 JSON 객체 1개씩 문자열로 기록(JSON Lines : JSONL)
-    # a(append) -> 파일에 새로운 내용을 추가
-    with open(f"{log_dir}/sensor_json.log","a",encoding="utf-8") as f:
-        f.write(json.dumps(data) + "\n")
+    # Invalid records are intentional: they exercise the DLQ and data-quality
+    # monitoring path instead of hiding bad upstream data.
+    if rng.random() < invalid_rate:
+        event["temperature"] = 999.0
+    return event
 
-    # text 형태로 파일 기록(한줄에 로그 1개씩) -> f-string 구성
-    # 파일명 ./sensor_log/sensor_text.log
-    text = f'[{data["timestamp"]}] ID={data["sensor_id"]} |  TEMP:{data["temperature"]} |   HUMI:{data["humidity"]} |   STAT:{data["status"]}'
-    with open(f"{log_dir}/sensor_text.log","a",encoding="utf-8") as f:
-        f.write(json.dumps(text) + "\n")
 
-    print(f"로그 발생 완료 { data['timestamp'] }")
-# 4. 로그 발생기 가동
-def main():
+def write_event(event: dict[str, object], log_dir: Path) -> None:
+    log_dir.mkdir(parents=True, exist_ok=True)
+    with (log_dir / "sensor_json.log").open("a", encoding="utf-8") as json_file:
+        json_file.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+    text = (
+        f"[{event['timestamp']}] ID={event['sensor_id']} | "
+        f"TEMP:{event['temperature']} | HUMI:{event['humidity']} | "
+        f"STAT:{event['status']}"
+    )
+    with (log_dir / "sensor_text.log").open("a", encoding="utf-8") as text_file:
+        text_file.write(text + "\n")
+
+
+def main() -> None:
+    log_dir = Path(os.getenv("LOG_DIR", "./sensor_logs"))
+    interval_seconds = _env_float("INTERVAL_SECONDS", 2.0)
+    invalid_rate = _env_float("INVALID_RATE", 0.05)
+    if not 0.0 <= invalid_rate <= 1.0:
+        raise ValueError("INVALID_RATE must be between 0 and 1")
+
+    rng = random.Random(os.getenv("RANDOM_SEED"))
+    print(
+        f"로그 발생 시작: directory={log_dir} interval={interval_seconds}s "
+        f"invalid_rate={invalid_rate}. 종료: Ctrl+C"
+    )
     try:
         while True:
-            generate_logs()
-            time.sleep(2)
-    except Exception as e:
-        print('종료 완료')
-    pass
+            event = generate_event(rng, invalid_rate)
+            write_event(event, log_dir)
+            print(f"로그 발생 완료 event_time={event['timestamp']} sensor_id={event['sensor_id']}")
+            time.sleep(interval_seconds)
+    except KeyboardInterrupt:
+        print("로그 발생 종료")
 
-# 5. 프로그램 시작
-if __name__  == '__main__':
-    print('로그발생 시작. 종료 ctrl+c')
+
+if __name__ == "__main__":
     main()
-

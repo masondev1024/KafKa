@@ -1,222 +1,157 @@
-# 주제
-- kafka
+# Kafka Streaming PoC
 
-# repo
-- https://github.com/edu-kenshi/kafka-local.git
+`local-datapipeline` 브랜치의 센서 로그 수집 실습을 기반으로, Kafka를 운영 가능한 데이터 파이프라인의 중심으로 확장한 로컬 PoC입니다.
 
-# 설치
-```
-    docker compose up -d
-```
+## 목표
 
-# 패키지 설치
-```
-pip install kafka-python
-```
+- 파일 로그 수집과 Kafka raw topic 발행
+- JSON/text 입력을 하나의 versioned data contract로 정규화
+- 유효하지 않은 이벤트를 DLQ로 격리
+- at-least-once 처리와 명시적 offset commit
+- `event_id` 기반 중복 방지
+- 로컬 DuckDB sink를 통한 분석 데이터 제공
+- AWS Firehose 전송 경로는 `aws` Compose profile로 분리
 
-# CLI 모드로 테스트
-```
-# 접속
-# 호스트  PC
-PS ~\kafka-local> docker container exec -it kafka bash
+## 아키텍처
 
-# 컨테이너
-root@4527e52ba5f6:/# pwd
-/
-root@4527e52ba5f6:/# cd /opt/kafka/bin
-
-# 토픽 생성
-# 파티션 1개로 관리, 복제본 1개로 관리되는 토픽 구성
-> kafka-topics.sh --create --topic spacex --bootstrap-server 127.0.0.1:9092 --partitions 1 --replication-factor 1
-
-# 토픽 전송(프로듀서)
-> kafka-console-producer.sh --topic spacex --bootstrap-server 127.0.0.1:9092
-
-# 컨슈머
-> kafka-console-consumer.sh --topic spacex --bootstrap-server 127.0.0.1:9092
-
+```text
+log_gen.py
+    ├── sensor_json.log ──> Fluent Bit ──> factory.sensor.raw.json.v1 ──┐
+    └── sensor_text.log ──> Fluent Bit ──> Logstash ──> factory.sensor.raw.text.v1 ─┤
+                                                                                      │
+                                                        stream-processor             │
+                                          normalize / validate / DLQ                 │
+                                             ├── factory.sensor.clean.v1 ──> stream-sink ──> data/sensor.duckdb
+                                             └── factory.sensor.dlq.v1
 ```
 
-# local-datapipline 목표 시스템
-```
-[ LAYER ]          [ COMPONENT ]          [ PROTOCOL / ACTION ]            [ DATA FORMAT ]
-====================================================================================================
-SOURCE       :     Python (log_gen.py)  ----( Write to File )---->  [ /sensor_logs/*.log ]
-               |                                                                   |
-               |                                                            ( Shared Volume )
-               v                                                                   |
-INGESTION    :     Fluent Bit (Agent)   <---( Tailing File  )----------------------+
-               |          |
-               |          | [ CHANNEL A: DIRECT BYPASS(json) ]
-               |          +--------------------------------------------( Produce )--+
-               |          |                                                         |
-               |          | [ CHANNEL B: PROXY ROUTE(text) ]                             |
-               |          +----( Forward )----> [ Logstash ] ----( Produce )--+     |
-               |                                     |                        |     |
-               v                                     v                        v     v
-TRANSFORM    : (A: Bypass)  +--[ Grok    : Pattern Matching & Extract Fields   ]--+ |
-               |            +--[ Mutate  : Data Type Conversion (Str->Float)   ]--+ |
-               |            +--[ Tagging : Add Metadata for Conditional Alerts ]--+ |
-               |                                                              |     |
-MESSAGING    :     Kafka / MSK (Broker) <-------------------------------------+-----+
-               |          |             ( Merge Structured & Processed Data )
-               |          |
-               |          +----( Topic A: factory-json-topic ) <--- [Channel A Result]
-               |          +----( Topic B: factory-text-topic ) <--- [Channel B Result]
-               v                                                               |
-               v                                                               |
-                                                                        kafka connect / ui
-                                                                                |
-                                                                                v               
-VISUALIZE    :     OpenSearch (DB)      <---( Indexing & Search )---->  DASHBOARD (Kibana)
-====================================================================================================
+Kafka 내부 컨테이너는 `kafka:9092`, 호스트에서 접근할 때는 `localhost:29092`를 사용합니다. 로컬 브로커는 KRaft 단일 노드이며 replication factor는 1입니다. 이는 개발용 설정이고 고가용성 구성이 아닙니다.
+
+## 실행
+
+```bash
+docker compose up -d --build
+python3 log_gen.py
 ```
 
-```
-[ 계층 ]            [ 구성 요소 ]              [ 프로토콜 / 동작 ]              [ 데이터 형식 ]
-====================================================================================================
-데이터 소스  :     파이썬 (log_gen.py)  ----( 파일 쓰기 동작 )---->  [ /sensor_logs/*.log ]
-               |                                                                   |
-               |                                                            ( 공유 볼륨 연결 )
-               v                                                                   |
-데이터 수집  :     Fluent Bit (에이전트) <---( 로그 실시간 추적 )----------------------+
-               |          |
-               |          | [ 채널 A: 최단거리 직결 ]
-               |          +--------------------------------------------( 메시지 발행 )--+
-               |          |                                                          |
-               |          | [ 채널 B: 가공 처리 중계 ]                                    |
-               |          +----( 데이터 전달 )----> [ Logstash ] ----( 메시지 발행)--+     |
-               |                                       |                          |  |
-               v                                       v                          v  v
-데이터 가공  : (A: 통과)    +--[ Grok    : 패턴 매칭을 통한 의미 있는 필드 추출 ]---+       |
-               |            +--[ Mutate  : 데이터 타입 변환 (문자열 -> 실수형)  ]---+  |
-               |            +--[ Tagging : 조건별 알람 처리를 위한 메타데이터  ]---+    |
-               |                                                                  |  |
-데이터 적재  :     Kafka / MSK (허브)   <------------------------------------------+--+
-               |          |             ( 직결 데이터와 가공 데이터 통합 수신 )
-               |          |
-               |          +----( 토픽 A: factory-json-topic ) <--- [채널 A 결과물]
-               |          +----( 토픽 B: factory-text-topic ) <--- [채널 B 결과물]
-               v                                                                  |
-                                                                            kafka connect / ui
-                                                                                  |
-                                                                                  v
-시각화/분석  :     OpenSearch (DB)      <---( 인덱싱 및 검색 )------>  대시보드 (Kibana)
-====================================================================================================
+상태 확인:
+
+```bash
+docker compose ps
+docker compose logs -f stream-processor stream-sink
 ```
 
+토픽 확인:
 
-# 프로젝트 재구성
-- docker-compose.yml 수정 (KRaft 적용된)
+```bash
+docker compose exec kafka /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server kafka:9092 --list
 ```
-    docker compose down
-    docker compose up -d
+
+정규화된 이벤트 확인:
+
+```bash
+docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
+  --bootstrap-server kafka:9092 \
+  --topic factory.sensor.clean.v1 \
+  --from-beginning
 ```
 
-# Fluentd(40~60MB) <-> Fluent-Bit (1~5MB)
-- 태그 기반 라우팅 도구(Tag Based Routing)
-- Ruby(C 결합) 구조 <-> C 
-- fluent-bit/etc/fluent-bit.conf 에서 구성 기술 완료
-- 목표
-    - 데이터 수집, 처리, 전달 => ETL 도구
-    - 경량형 오픈 소스 로그 프로세서
-    - 고가용성, 고성능 처리, 데이터 처리 안정성
-- 파이프라인 
-    - Input : 파일, 시스템 매트릭, http 스트림, .. 다양한 소스 제공
-    - Service, Parser, Filter, Buffer, Rounting
-    - Output : Kafka/Opensearch/Elasticsearch/s3/... 모두 가능함
-- 지원 플러그인 
-    - 1000여개 <-> 100여개
+DLQ 확인:
 
-- conf 구성 => 규칙 기술
-    ```
-    docker compose restart
-    ```
-
-- 커슈머 구동
-    ```
-        PS ...> docker exec -it kafka-local bash
-
-        # json 관련 토픽 커슈머
-        > ./opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server 127.0.0.1:9092 --topic factory-json-topic --from-beginning
-
-        # text 관련 토픽 커슈머
-        > ./opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server 127.0.0.1:9092 --topic factory-text-topic --from-beginning
-    ```
-
-- 로그 발생 -> 카프카 컨슈머 수시 확인
-    ```
-        python log_gen.py
-    ```
-    
-- conf가 수정되면
-    - `docker compose restart` 반드시 수행
-
-- 전달 내용
-    - http로 전달해서 데이터가 늘어났음, 
-    - forward등 전달 방식은 다양함
-        - forward 시도, 24224 포트 사용
+```bash
+docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
+  --bootstrap-server kafka:9092 \
+  --topic factory.sensor.dlq.v1 \
+  --from-beginning
 ```
+
+DuckDB 조회:
+
+```bash
+docker compose stop stream-sink
+docker compose run --rm --no-deps stream-sink python -c \
+  "import duckdb; print(duckdb.connect('/data/sensor.duckdb').execute('select sensor_id, count(*) as events from sensor_events group by sensor_id order by sensor_id').fetchall())"
+docker compose start stream-sink
+```
+
+DuckDB 파일은 단일 writer lock을 사용하므로 sink가 실행 중인 동안 별도 프로세스에서
+같은 파일을 열 수 없습니다. 운영 환경에서는 전용 OLAP 저장소나 Iceberg/Parquet 테이블을
+조회 대상으로 분리합니다.
+
+Kafka UI는 <http://localhost:8081>에서 확인할 수 있습니다.
+
+## 데이터 계약
+
+정규화된 `factory.sensor.clean.v1` 이벤트는 다음 필드를 보장합니다.
+
+```json
 {
-    "event":{
-        "original":"[{\"date\":1777005819.42045,\"log\":\"\\\"[2026-04-24 13:43:38] ID=AI-FACTORY-001 |   TEMP:87.5 |   HUMI:42.1 |   STAT:RUNNING\\\"\"}]"},
-        "host":{"ip":"172.19.0.3"},
-        "user_agent":{"original":"Fluent-Bit"},
-        "date":1.77700581942045E9,
-        "url":{
-            "path":"/",
-            "domain":"logstash",
-            "port":5044
-        },
-        "http":{
-            "version":"HTTP/1.1",
-            "method":"POST",
-            "request":{
-                "body":{
-                    "bytes":"124"
-                },
-                "mime_type":"application/json"
-            }
-        },
-        "log":"\"[2026-04-24 13:43:38] ID=AI-FACTORY-001 |   TEMP:87.5 |   HUMI:42.1 |   STAT:RUNNING\"","@version":"1",
-        "@timestamp":"2026-04-24T04:43:40.412003029Z"
-    }
+  "schema_version": "factory-sensor.v1",
+  "event_id": "sha256(...)",
+  "event_time": "2026-08-23T12:00:00Z",
+  "ingested_at": "2026-08-23T12:00:01Z",
+  "sensor_id": "AI-FACTORY-001",
+  "temperature": 87.5,
+  "humidity": 42.4,
+  "status": "RUNNING",
+  "source": {
+    "topic": "factory.sensor.raw.json.v1",
+    "partition": 0,
+    "offset": 12
+  }
 }
 ```
 
-# 로그 형태
-- 참고
-    - 최초 데이터 => fluent-bit/logstash => 데이터 형태가 노이즈 많음!!(프토토콜때문에 추가된 내용이 많음) => 필터 역활 필요함
-    - 필터 보정 하는 내용 업데이트 (추후)
+현재 검증 규칙은 다음과 같습니다.
 
-# kafka 대시보드
-- kafka ui
-- 메세지의 흐름, connect를 통해 전달이 잘되는지 등등 모니터링 
+- `sensor_id`: 영숫자, `_`, `-` 조합
+- `temperature`: `-40` 이상 `150` 이하
+- `humidity`: `0` 이상 `100` 이하
+- `status`: `RUNNING`, `IDLE`, `STOPPED`, `ERROR`
+- timestamp 필수
 
-# 로컬 -> 클라우드 연결
-- kafka connect => X (플러그인 자주 변경, 정책 변경)
-- 전용 포워더로 변경
-    - Vector는 Datadog에서 만든 초고속 데이터 파이프라인 도구
-    - Java 의존성이 없고 단일 실행 파일로 돌아가서 Kafka Connect보다 훨씬 가볍고 설치가 쉬움
-    - YAML 설정 파일 하나로 모든 게 끝남.
-    - 메모리 사용량이 매우 적음 (Rust 기반).
-    - 단축된 파이프라인: Kafka -> Vector -> Firehose 구조를 YAML 설정 하나로 끝
-- docker-compose.yml 수정 (이미 반영되어 있음)
-    ```
-        vector:
-            image: timberio/vector:0.36.0-debian # 최신 안정 버전
-            container_name: vector
-            volumes:
-                - ./vector.yaml:/etc/vector/vector.yaml:ro
-            environment:
-                # .env 파일에 정의된 AWS 인증 정보를 전달
-                AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY}"
-                AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_KEY}"
-                AWS_REGION: "${AWS_REGION}"
-            depends_on:
-                - kafka
-            networks:
-                - kafka-net
-    ```
-- vector.yaml 작성
-    - 파일 참고
+검증 실패 이벤트는 원문과 실패 원인, Kafka source offset을 포함해 `factory.sensor.dlq.v1`로 보냅니다.
+
+## 장애·중복 처리 설계
+
+- Producer는 `acks=all`, retry, gzip compression을 사용합니다.
+- Processor는 output publish가 성공한 뒤에만 input offset을 commit합니다.
+- publish 후 commit 전에 장애가 나면 동일 이벤트가 재처리될 수 있으므로 at-least-once semantics입니다.
+- Sink는 `event_id` primary key와 `ON CONFLICT DO NOTHING`으로 중복 저장을 방지합니다.
+- Fluent Bit는 파일 offset DB와 filesystem buffer를 사용해 재시작 시 재전송·유실 위험을 줄입니다.
+
+## 테스트
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+DLQ 경로를 강제로 확인하려면 별도 터미널에서 다음처럼 invalid event 비율을 높여 실행합니다.
+
+```bash
+INVALID_RATE=1 INTERVAL_SECONDS=1 python3 log_gen.py
+```
+
+## AWS 전송 경로
+
+기본 실행에서는 AWS 자격증명을 요구하지 않습니다. Vector 기반 Firehose sink를 별도로 실행할 때만 환경변수를 설정합니다.
+
+```bash
+export AWS_ACCESS_KEY=...
+export AWS_SECRET_KEY=...
+export AWS_REGION=ap-northeast-2
+docker compose --profile aws up -d vector
+```
+
+운영 환경에서는 장기 access key 대신 IAM role 또는 workload identity를 사용해야 합니다.
+
+## 다음 고도화 단계
+
+1. JSON Schema/Schema Registry와 backward-compatible schema evolution
+2. Prometheus exporter 및 consumer lag/error-rate alerting
+3. DuckDB sink를 Spark Structured Streaming + Parquet/Iceberg로 교체
+4. Airflow DAG로 품질검사, compact, backfill 자동화
+5. Kafka TLS/SASL, ACL, secret manager 적용
+6. 단일 브로커를 다중 broker와 replication factor 3 환경으로 확장
+7. Testcontainers 기반 통합 테스트와 장애 주입 테스트 추가
