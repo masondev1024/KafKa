@@ -223,4 +223,9 @@ data/
 .terraform/
 *.tfstate
 *.tfstate.*
+*.tfvars
+!*.tfvars.example
 crash.log
+
+# Local-only design notes and environment-specific validation snapshots
+/docs/
