@@ -218,3 +218,9 @@ runtime/
 data/
 *.duckdb
 *.duckdb.wal
+
+# Terraform local state and provider cache
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log

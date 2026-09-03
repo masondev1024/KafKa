@@ -1,12 +1,18 @@
+# Vector's disk buffer is mounted at /var/lib/vector by the Compose profile.
+data_dir: "/var/lib/vector"
+
 # ====================================
 # 1. 데이터 소스 (Kafka에서 읽기)
-# Normalizer가 보증한 clean topic을 구독합
+# Normalizer가 보증한 clean topic을 구독합니다.
 # ====================================
 sources:
   kafka_to_firehose_source:
     type: "kafka"
     bootstrap_servers: "kafka:9092"
-    group_id: "vector-firehose-consumer" # 컨슈머 그룹 ID
+    group_id: "vector-firehose-consumer-v1"
+    auto_offset_reset: "earliest"
+    decoding:
+      codec: "json"
     topics: 
       - "factory.sensor.clean.v1"
 
@@ -33,11 +39,17 @@ sinks:
     type: "aws_kinesis_firehose"
     inputs: 
       - "add_ingest_time"
-    
-    # AWS 설정
-    region: "ap-northeast-2"
-    stream_name: "putdirect-de-ai-06-adf-kafka" # 실제 스트림 이름으로 수정
-
-    # 전송 데이터 형식
+    region: "${AWS_REGION:-ap-northeast-2}"
+    stream_name: "${FIREHOSE_STREAM_NAME:?FIREHOSE_STREAM_NAME must be set}"
+    acknowledgements:
+      enabled: true
+    request_retry_partial: false
+    batch:
+      max_events: 500
+      timeout_secs: 5
+    buffer:
+      type: "disk"
+      max_size: 268435488
+      when_full: "block"
     encoding:
       codec: "json"

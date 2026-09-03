@@ -1,0 +1,42 @@
+groups:
+  - name: factory-sensor-pipeline
+    rules:
+      - alert: SensorProcessorConsumerLagHigh
+        expr: max(sensor_processor_consumer_lag) > 100
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Sensor processor consumer lag is high"
+          description: "At least one raw Kafka partition has more than 100 unprocessed records."
+
+      - alert: SensorProcessorPublishFailures
+        expr: increase(sensor_processor_publish_failures_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Sensor processor cannot publish output"
+          description: "The processor has observed a Kafka output publish failure in the last 5 minutes."
+
+      - alert: SensorDataQualityDlqRateHigh
+        expr: |
+          sum(rate(sensor_processor_records_total{result="dlq"}[5m]))
+          /
+          clamp_min(sum(rate(sensor_processor_records_total[5m])), 0.000001)
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Sensor data quality failure rate is high"
+          description: "More than 5% of routed records have entered the DLQ over 5 minutes."
+
+      - alert: SensorSinkWriteFailures
+        expr: increase(sensor_sink_failures_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Sensor sink write failed"
+          description: "The DuckDB sink has failed to commit a canonical event in the last 5 minutes."

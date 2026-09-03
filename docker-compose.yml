@@ -83,6 +83,8 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:9100:9100"
     command: ["python", "-m", "services.processor"]
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
@@ -90,6 +92,7 @@ services:
       CLEAN_TOPIC: factory.sensor.clean.v1
       DLQ_TOPIC: factory.sensor.dlq.v1
       CONSUMER_GROUP: sensor-normalizer-v1
+      METRICS_PORT: 9100
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -107,8 +110,11 @@ services:
       CLEAN_TOPIC: factory.sensor.clean.v1
       SINK_CONSUMER_GROUP: sensor-duckdb-sink-v1
       DUCKDB_PATH: /data/sensor.duckdb
+      METRICS_PORT: 9101
     volumes:
       - ./data:/data
+    ports:
+      - "127.0.0.1:9101:9101"
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -119,15 +125,43 @@ services:
     profiles: ["aws"]
     image: timberio/vector:0.36.0-debian
     restart: unless-stopped
+    # Vector 0.36 enables interpolation by default; strict mode turns a missing
+    # Firehose stream name into a startup failure instead of a warning.
+    command: ["--config", "/etc/vector/vector.yaml", "--strict-env-vars"]
     volumes:
       - ./vector.yaml:/etc/vector/vector.yaml:ro
+      - ./runtime/vector:/var/lib/vector
     environment:
-      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY:-}"
-      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_KEY:-}"
+      FIREHOSE_STREAM_NAME: "${FIREHOSE_STREAM_NAME:-}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
       AWS_REGION: "${AWS_REGION:-ap-northeast-2}"
+      AWS_DEFAULT_REGION: "${AWS_REGION:-ap-northeast-2}"
     depends_on:
       kafka-init:
         condition: service_completed_successfully
+    networks:
+      - kafka-net
+
+  prometheus:
+    profiles: ["observability"]
+    image: prom/prometheus:v2.54.1
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=1d"
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus-alerts.yml:/etc/prometheus/prometheus-alerts.yml:ro
+    depends_on:
+      stream-processor:
+        condition: service_started
+      stream-sink:
+        condition: service_started
     networks:
       - kafka-net
 

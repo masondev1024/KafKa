@@ -1,0 +1,11 @@
+aws_region                = "ap-northeast-2"
+project_name              = "factory-sensor-poc"
+environment               = "portfolio"
+enable_parquet_conversion = true
+firehose_buffer_interval_seconds = 60
+data_retention_days       = 7
+cloudwatch_log_retention_days = 7
+force_destroy             = false
+
+# Set this only when you need a pre-selected globally unique bucket name.
+# bucket_name = "your-globally-unique-bucket-name"
